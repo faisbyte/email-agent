@@ -1,0 +1,32 @@
+Copy this file to data/cv.txt and replace it with your real background.
+
+Everything Claude writes about you is drawn from this file. If a fact is not
+here, it will not appear in an email — that is deliberate, and it is what keeps
+the outreach honest.
+
+Plain text. No formatting needed.
+
+---
+
+NAME
+Your Name — Software Engineer, Sydney, Australia
+
+SUMMARY
+Two or three sentences. What you build, what you are good at, what you want next.
+
+EXPERIENCE
+Company — Title (2023–2026)
+  What you actually did. Name the systems, the scale, the outcome.
+  Keep it checkable. No adjectives you could not defend in an interview.
+
+Company — Title (2021–2023)
+  As above.
+
+SKILLS
+Languages, frameworks, infrastructure you would be comfortable being asked about.
+
+EDUCATION
+Degree, institution, year.
+
+LINKS
+GitHub, LinkedIn, personal site.

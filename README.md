@@ -1,1 +1,210 @@
-# email-agent
+# Outreach Agent
+
+Pull contacts from Apollo.io, write each one a personalised email with Claude,
+send it from your Gmail, and record everything so the same person is never
+contacted twice.
+
+Deterministic Python drives the loop. Claude is called for exactly two things:
+composing an email body and classifying a reply. Nothing else is delegated to a
+model, so the behaviour you read in the code is the behaviour you get.
+
+The first shipped campaign is job-search outreach to talent acquisition people.
+That is a configuration file, not the architecture — a second campaign ships
+alongside it to keep the general path honest.
+
+> **Dry-run is the default.** `outreach run` composes and records but sends
+> nothing. Delivery requires an explicit `--live` flag and a typed confirmation.
+
+---
+
+## What it does
+
+1. **`search`** — queries Apollo for people matching your campaign's filters and
+   stores them. Suppression and prior contact are checked *before* paying a
+   credit to reveal an address.
+2. **`run`** — for each new contact: checks the suppression list, checks whether
+   they have been written to before, asks Claude for a subject and body, appends
+   a plain-text removal line, sends, records. Waits a random 30–180 seconds
+   between sends.
+3. **`poll-replies`** — reads the inbox over IMAP, detects bounces from headers,
+   catches explicit opt-outs with a regex, and asks Claude to classify the rest
+   as interested / rejection / auto-reply / opt-out. An opt-out is suppressed
+   immediately.
+4. **`follow-up`** — one nudge to people who never replied, subject to the same
+   caps and checks. Any human reply stops all follow-ups permanently.
+
+---
+
+## Setup
+
+You need Python 3.11 or newer.
+
+```bash
+git clone <your-fork-url> email-agent
+cd email-agent
+
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+pip install -e ".[dev]"
+```
+
+Then fill in three keys:
+
+```bash
+cp .env.example .env
+```
+
+| Key | Where to get it |
+|---|---|
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `APOLLO_API_KEY` | Apollo → Settings → Integrations → API |
+| `GMAIL_APP_PASSWORD` | Enable 2-Step Verification, then [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) — a 16-character app password, **not** your account password |
+
+Add your CV and create the database:
+
+```bash
+cp data/cv.example.txt data/cv.txt
+$EDITOR data/cv.txt                # everything Claude says about you comes from here
+
+outreach init-db
+```
+
+`.env`, `data/cv.txt` and `*.db` are all gitignored.
+
+---
+
+## Use
+
+```bash
+# 1. Find people. Costs Apollo credits. Sends nothing.
+outreach search --limit 25
+
+# 2. Rehearse. Composes real emails, delivers none.
+outreach run
+
+# 3. Read what it wrote, then send for real.
+outreach run --live
+
+# Later:
+outreach poll-replies          # classify replies, apply opt-outs
+outreach follow-up --live      # nudge people who never replied
+outreach stats                 # what has gone out, and today's usage
+outreach suppress someone@corp.com --reason "asked by email"
+```
+
+`outreach suppress` accepts a bare domain too — `outreach suppress corp.com`
+blocks every address there.
+
+---
+
+## Safety properties
+
+These are enforced in code and covered by tests, not left to discipline.
+
+**Dry-run is structural.** A sender capable of delivering mail is constructed
+only by `build_sender(..., live=True)`. Without `--live` the loop is handed a
+`DryRunSender`, so it does not skip the send — it never holds an object that
+could send.
+
+**The daily cap has a ceiling configuration cannot raise.** `HARD_DAILY_CAP` in
+`runner.py` is 50. A `DAILY_CAP` above it is clamped, loudly, on every run. The
+count comes from the database at the top of every iteration, so it survives a
+crash, a restart, and two terminals running at once.
+
+**Nobody is written to twice.** `contacts.email` is UNIQUE, addresses are
+normalised on every read and write, and `already_contacted()` is global across
+campaigns. A *failed* send counts as contact: an SMTP error can be raised after
+the message was handed off, and a duplicate is worse than a miss.
+
+**Suppression is checked immediately before delivery.** Not once when candidates
+were selected. Up to three minutes of pause and one composition call sit between
+selection and sending, and a removal request that lands in that window still
+takes effect on that very message.
+
+**Every email offers a way out.** The removal line is appended by Python after
+the model returns, and the runner refuses to send a body that lacks it. A
+guarantee that depends on a model following an instruction is not a guarantee.
+
+**A human reply ends the sequence.** Interested, rejection and opt-out all stop
+follow-ups. An out-of-office does not — it is not a person saying no.
+
+---
+
+## Configuration
+
+Everything lives in `.env`; see `.env.example` for the annotated list.
+
+The two worth knowing:
+
+- **`DATABASE_URL`** defaults to `sqlite:///outreach.db`. Point it at
+  `postgresql+psycopg://...` and nothing else changes — there is one data layer,
+  and no code branches on the backend.
+- **`ANTHROPIC_MODEL`** defaults to `claude-sonnet-5`. Both LLM calls depend on
+  structured outputs, so the model is validated against a support list at
+  startup; an unsupported one fails before the first contact, not at the
+  seventeenth.
+
+### Campaigns
+
+A campaign is a TOML file: who you are, what you want, the tone, the Apollo
+filters, and the follow-up policy. Copy `campaigns/job_search.toml`, change it,
+and point `CAMPAIGN` at it. No code changes.
+
+```bash
+outreach run --campaign campaigns/partnerships.toml
+```
+
+---
+
+## Development
+
+```bash
+pytest            # 269 tests, no network, no clock
+ruff check src tests
+```
+
+The suite runs against in-memory SQLite with every external service injected as
+a fake. Two guarantees are enforced by autouse fixtures rather than by
+remembering:
+
+- **`socket.socket.connect` raises.** If any test reaches for the network, it
+  fails loudly instead of quietly making a real call.
+- **`time.sleep` raises for anything over a second.** A test that forgot to
+  inject a fake clock would otherwise pass while taking hours.
+
+### Layout
+
+| Module | Responsibility |
+|---|---|
+| `config.py` | Environment loading and validation. Reports every problem at once, at startup. |
+| `campaigns.py` | Campaign templates — the content, as distinct from the configuration. |
+| `store.py` | SQLAlchemy models, sessions, and every query. Dialect-agnostic. |
+| `apollo_client.py` | People search and enrichment. Credit-aware, exponential backoff, typed errors. |
+| `composer.py` | The Anthropic call that writes the email. |
+| `sender.py` | `Sender` interface, `SmtpSender`, `GmailApiSender` (stub), `DryRunSender`. |
+| `inbox.py` | IMAP polling, bounce detection, reply classification. |
+| `runner.py` | The loop: caps, jitter, per-send checks, dry-run. |
+| `cli.py` | Entry point. |
+
+### Not built yet
+
+- **Migrations.** `init-db` calls `create_all()`. There is no Alembic setup, so
+  a schema change today means recreating the database.
+- **The Gmail API sender.** `GmailApiSender` exists behind the interface and
+  raises `NotImplementedError`. SMTP with an app password is the working path.
+
+---
+
+## A word on using this
+
+Cold outreach is easy to do badly. The caps, the delays, the removal line and
+the suppression list are here because sending less, to fewer, better-chosen
+people is both kinder and more effective. Raising the ceiling is a code change,
+deliberately.
+
+Check your jurisdiction's rules on unsolicited email before you send anything.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

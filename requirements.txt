@@ -1,0 +1,10 @@
+# Runtime dependencies, pinned exactly.
+#
+# anthropic is pinned hard on purpose: client.messages.parse() and its
+# parsed_output surface have moved between SDK versions, and a floating pin is
+# how this breaks silently in someone else's clone months from now.
+anthropic==1.4.0
+SQLAlchemy==2.0.52
+requests==2.34.2
+python-dotenv==1.2.3
+pydantic==2.13.5

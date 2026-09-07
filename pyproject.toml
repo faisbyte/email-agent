@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "outreach-agent"
+version = "0.1.0"
+description = "Deterministic outreach automation: Apollo.io contacts, Claude-composed email, Gmail delivery, never-contact-twice bookkeeping."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Faisal Naveed" }]
+keywords = ["outreach", "email", "apollo", "anthropic", "claude", "automation"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "anthropic==1.4.0",
+    "SQLAlchemy==2.0.52",
+    "requests==2.34.2",
+    "python-dotenv==1.2.3",
+    "pydantic==2.13.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.14.4"]
+
+[project.scripts]
+outreach = "outreach_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:outreach_agent.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

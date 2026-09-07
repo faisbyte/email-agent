@@ -1,0 +1,61 @@
+# Job-search outreach to talent acquisition and recruiting people.
+#
+# This is one configuration of a general tool. Copy it, change the persona,
+# goal and filters, and you have a different campaign.
+
+name = "Job search — talent acquisition"
+
+# One or two sentences describing who is sending. Claude may only state facts
+# that appear here or in your CV file.
+sender_persona = """
+A software engineer looking for their next role. Writes plainly, does not
+oversell, and would rather be useful than impressive.
+"""
+
+# What a successful email achieves. Keep it to one concrete, small ask.
+goal = """
+Open a short conversation about open engineering roles on their team, and ask
+whether it is worth sending a CV. The ask is a reply, not a meeting.
+"""
+
+# Style rules handed to the model verbatim.
+tone = [
+    "Direct and warm. No corporate throat-clearing.",
+    "No flattery about the company's 'exciting mission'.",
+    "Say one specific, checkable thing about their company or their role.",
+    "Never claim to have used a product you have not used.",
+    "Short paragraphs. No bullet lists. No markdown. No emoji.",
+    "Sign off with the sender's first name only.",
+]
+
+subject_guidance = """
+Under nine words, lowercase-ish and specific. No clickbait, no 'Quick question',
+no re: prefix on a first email.
+"""
+
+max_words = 150
+
+# Appended by Python after the model returns, on every single email.
+# No URL: this project serves no unsubscribe page, so removal is a reply.
+removal_line = "If you'd rather not hear from me, reply with 'no thanks' and I won't write again."
+
+[apollo]
+person_titles = [
+    "Talent Acquisition",
+    "Technical Recruiter",
+    "Talent Partner",
+    "Head of Talent",
+    "Recruiting Manager",
+]
+person_seniorities = ["senior", "manager", "director", "head"]
+person_locations = ["Australia"]
+organization_num_employees_ranges = ["51,200", "201,500", "501,1000", "1001,5000"]
+q_keywords = "software engineering hiring"
+
+[follow_up]
+max_follow_ups = 1
+days_between = 6
+goal = """
+One short nudge. Reference the first email in a single clause, restate the ask
+in fewer words, and make it easy to say no.
+"""

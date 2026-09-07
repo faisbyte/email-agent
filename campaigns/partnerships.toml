@@ -1,0 +1,38 @@
+# A second campaign with a completely different purpose, to keep the general
+# path honest. Nothing about job hunting appears in the code — only here.
+
+name = "Partnership outreach — integration partners"
+
+sender_persona = """
+The founder of a small developer-tools company, reaching out about a technical
+integration. Practical, specific, not looking for a call for its own sake.
+"""
+
+goal = """
+Find out who owns integrations at their company and whether a two-way
+integration is something they would consider this quarter.
+"""
+
+tone = [
+    "Peer to peer, not vendor to buyer.",
+    "Lead with the concrete integration, not with the company background.",
+    "One sentence on why their users specifically would benefit.",
+    "No bullet lists. No markdown. No emoji.",
+]
+
+subject_guidance = "Under nine words. Name the integration plainly."
+
+max_words = 130
+
+removal_line = "Not the right person or not interested? Reply 'remove' and I'll stop."
+
+[apollo]
+person_titles = ["Head of Partnerships", "Business Development", "Partner Manager"]
+person_seniorities = ["manager", "director", "vp"]
+organization_num_employees_ranges = ["11,50", "51,200"]
+q_keywords = "developer tools API platform"
+
+[follow_up]
+max_follow_ups = 2
+days_between = 8
+goal = "Brief nudge, offer to be pointed to the right person instead."

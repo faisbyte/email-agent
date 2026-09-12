@@ -20,7 +20,7 @@ from . import __version__
 from .apollo_client import ApolloClient, ApolloError
 from .campaigns import CampaignError, load_campaign
 from .composer import Composer
-from .config import Config, ConfigError, load_config, load_cv
+from .config import Config, ConfigError, load_config
 from .inbox import InboxPoller, ReplyClassifier, process_replies
 from .runner import HARD_DAILY_CAP, discover, effective_daily_cap, run, run_follow_ups
 from .sender import build_sender
@@ -88,9 +88,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     live = getattr(args, "live", False)
+    # Commands that compose need the CV validated at startup, so a missing file
+    # stops the run before the first contact rather than surprising it mid-list.
+    composes = args.command in {"run", "follow-up"}
 
     try:
-        config = load_config(require_send=live)
+        config = load_config(require_send=live, require_cv=composes)
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_CONFIG
@@ -193,7 +196,6 @@ def _search(config: Config, campaign, session_factory, args) -> int:
 
 def _send(config: Config, campaign, session_factory, args, *, follow_up: bool) -> int:
     live = args.live
-    cv_text = load_cv(config.cv_path)
 
     if live and not args.yes and not _confirm(config, campaign, follow_up=follow_up):
         print("Cancelled. Nothing was sent.")
@@ -202,7 +204,12 @@ def _send(config: Config, campaign, session_factory, args, *, follow_up: bool) -
     import anthropic
 
     client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-    composer = Composer(client, model=config.anthropic_model)
+    composer = Composer(
+        client,
+        model=config.anthropic_model,
+        sender_name=config.sender_name,
+        personal_website=config.personal_website,
+    )
 
     # The only place a live sender is constructed. Without --live this returns
     # a DryRunSender, so the loop below is not capable of delivering mail.
@@ -210,8 +217,10 @@ def _send(config: Config, campaign, session_factory, args, *, follow_up: bool) -
 
     with session_factory() as session:
         do = run_follow_ups if follow_up else run
-        result = do(config, campaign, session, composer, sender, cv_text, live=live,
-                    limit=args.limit)
+        result = do(
+            config, campaign, session, composer, sender, config.cv_text,
+            live=live, limit=args.limit,
+        )
 
     label = "Sent" if live else "Would send (dry run)"
     print(f"\n{label}: {result.sent}")

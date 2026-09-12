@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -45,6 +46,11 @@ LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_DATABASE_URL = "sqlite:///outreach.db"
 
+#: Upper bound on the CV text. The whole file goes into the system prompt of
+#: every composition, so an accidentally huge file is an accidentally huge bill.
+#: Failing loudly beats silently sending a novel to the model.
+MAX_CV_CHARS = 20_000
+
 
 class ConfigError(Exception):
     """Raised when the environment is not fit to run.
@@ -74,6 +80,7 @@ class Config:
     gmail_address: str
     gmail_app_password: str
     sender_name: str
+    personal_website: str
 
     daily_cap: int
     min_delay_seconds: int
@@ -91,6 +98,10 @@ class Config:
     sender_backend: str
 
     log_level: str
+
+    #: Populated only when load_config(require_cv=True). Read once at startup
+    #: and reused for every contact — the CV does not change mid-run.
+    cv_text: str = ""
 
     @property
     def unsubscribe_mailto(self) -> str:
@@ -140,6 +151,7 @@ class _Collector:
 def load_config(
     *,
     require_send: bool = False,
+    require_cv: bool = False,
     env: dict[str, str] | None = None,
     load_dotenv_file: bool = True,
 ) -> Config:
@@ -149,6 +161,9 @@ def load_config(
         require_send: True when the caller intends to actually deliver mail
             (`--live`). Gmail credentials are only demanded in that case, so a
             dry run works with just the Anthropic and Apollo keys.
+        require_cv: True for any command that composes email. The CV is read
+            and validated here, at startup, so a missing file stops the run
+            before the first contact instead of surprising it mid-list.
         env: Environment mapping to read. Defaults to os.environ. Injected by
             tests so they never depend on the developer's real shell.
         load_dotenv_file: Load a .env file if present. The real environment
@@ -182,20 +197,32 @@ def load_config(
             f"Example: {DEFAULT_DATABASE_URL}"
         )
 
+    # Always required: Python writes the sign-off on every composed email, dry
+    # run included, so there is no mode in which the sender's name is optional.
+    sender_name = c.required_str("SENDER_NAME", why="to sign every email")
+
     # Sending credentials: only mandatory when the caller means to send.
     if require_send:
         gmail_address = c.required_str("GMAIL_ADDRESS", why="as the From address for live sending")
         gmail_app_password = c.required_str(
             "GMAIL_APP_PASSWORD", why="to authenticate with Gmail for live sending"
         )
-        sender_name = c.required_str("SENDER_NAME", why="as the display name for live sending")
     else:
         gmail_address = c.optional_str("GMAIL_ADDRESS", "")
         gmail_app_password = c.optional_str("GMAIL_APP_PASSWORD", "")
-        sender_name = c.optional_str("SENDER_NAME", "")
 
     if gmail_address and "@" not in gmail_address:
         c.problems.append(f"GMAIL_ADDRESS={gmail_address!r} is not an email address")
+
+    # Optional, and rendered on its own line under the sign-off when present.
+    personal_website = c.optional_str("PERSONAL_WEBSITE", "")
+    if personal_website:
+        parsed = urlparse(personal_website)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            c.problems.append(
+                f"PERSONAL_WEBSITE={personal_website!r} must be a full URL including the "
+                "scheme, for example https://example.com"
+            )
 
     daily_cap = c.positive_int("DAILY_CAP", 25)
     min_delay = c.positive_int("MIN_DELAY_SECONDS", 30)
@@ -218,6 +245,15 @@ def load_config(
     sender_backend = c.one_of("SENDER_BACKEND", "smtp", SENDER_BACKENDS, label="sender backend")
     log_level = c.one_of("LOG_LEVEL", "INFO", LOG_LEVELS, label="log level")
 
+    cv_text = ""
+    if require_cv:
+        try:
+            cv_text = load_cv(cv_path)
+        except ConfigError as exc:
+            # Fold the CV problems in with everything else so the caller sees
+            # one complete list rather than fixing faults one at a time.
+            c.problems.extend(exc.problems)
+
     if c.problems:
         raise ConfigError(c.problems)
 
@@ -229,6 +265,7 @@ def load_config(
         gmail_address=gmail_address,
         gmail_app_password=gmail_app_password,
         sender_name=sender_name,
+        personal_website=personal_website,
         daily_cap=daily_cap,
         min_delay_seconds=min_delay,
         max_delay_seconds=max_delay,
@@ -242,6 +279,7 @@ def load_config(
         imap_folder=imap_folder,
         sender_backend=sender_backend,
         log_level=log_level,
+        cv_text=cv_text,
     )
 
 
@@ -266,4 +304,13 @@ def load_cv(path: Path | str) -> str:
 
     if not text:
         raise ConfigError([f"CV file at {p} is empty. Claude may only use facts it finds here."])
+
+    if len(text) > MAX_CV_CHARS:
+        raise ConfigError(
+            [
+                f"CV file at {p} is {len(text):,} characters, over the {MAX_CV_CHARS:,} "
+                "limit. The whole file is sent with every composition, so trim it to the "
+                "background that is actually relevant to this outreach."
+            ]
+        )
     return text

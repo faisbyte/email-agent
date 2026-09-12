@@ -74,7 +74,11 @@ class Campaign:
     goal: str
     tone: list[str]
     subject_guidance: str
+    #: Soft guidance, handed to the model in the prompt.
     max_words: int
+    #: Hard gate, enforced in Python after the model answers. This is the one
+    #: that actually decides whether an email ships.
+    max_sentences: int
     removal_line: str
     apollo: ApolloFilters
     follow_up: FollowUpPolicy
@@ -128,6 +132,13 @@ def _build(data: dict[str, Any], path: Path | None) -> Campaign:
         problems.append(f"'max_words' must be a positive whole number, got {max_words!r}")
         max_words = 150
 
+    max_sentences = data.get("max_sentences", 5)
+    if not isinstance(max_sentences, int) or isinstance(max_sentences, bool) or max_sentences <= 0:
+        problems.append(
+            f"'max_sentences' must be a positive whole number, got {max_sentences!r}"
+        )
+        max_sentences = 5
+
     removal_line = values["removal_line"]
     if removal_line and ("http://" in removal_line or "https://" in removal_line):
         # There is no web server in this project, so a link in the removal line
@@ -153,6 +164,7 @@ def _build(data: dict[str, Any], path: Path | None) -> Campaign:
         tone=[t.strip() for t in tone if t.strip()],
         subject_guidance=values["subject_guidance"],
         max_words=max_words,
+        max_sentences=max_sentences,
         removal_line=removal_line,
         apollo=apollo,
         follow_up=follow_up,

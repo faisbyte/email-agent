@@ -22,7 +22,13 @@ tone = [
 
 subject_guidance = "Under nine words. Name the integration plainly."
 
+# Soft guidance, passed to the model in the prompt.
 max_words = 130
+
+# Hard gate, counted in Python after the model answers. The body is only
+# the middle of the email — the greeting, sign-off, website and removal
+# line are assembled separately and never count against this.
+max_sentences = 5
 
 removal_line = "Not the right person or not interested? Reply 'remove' and I'll stop."
 

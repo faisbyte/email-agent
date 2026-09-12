@@ -12,13 +12,20 @@ import pytest
 
 from outreach_agent.config import (
     DEFAULT_MODEL,
+    MAX_CV_CHARS,
     STRUCTURED_OUTPUT_MODELS,
     ConfigError,
     load_config,
     load_cv,
 )
 
-MINIMAL = {"ANTHROPIC_API_KEY": "sk-test", "APOLLO_API_KEY": "apollo-test"}
+# Python writes the sign-off on every composed email, so SENDER_NAME is
+# required in every mode — there is no dry run without a name to sign.
+MINIMAL = {
+    "ANTHROPIC_API_KEY": "sk-test",
+    "APOLLO_API_KEY": "apollo-test",
+    "SENDER_NAME": "Jane Engineer",
+}
 
 
 def load(**overrides):
@@ -30,10 +37,11 @@ def load(**overrides):
 # ─────────────────────────── required keys ───────────────────────────
 
 
-def test_a_dry_run_needs_only_the_two_api_keys():
+def test_a_dry_run_needs_the_two_api_keys_and_a_sender_name():
     config = load()
     assert config.anthropic_api_key == "sk-test"
     assert config.apollo_api_key == "apollo-test"
+    assert config.sender_name == "Jane Engineer"
 
 
 def test_every_missing_key_is_reported_at_once():
@@ -41,10 +49,18 @@ def test_every_missing_key_is_reported_at_once():
     with pytest.raises(ConfigError) as exc:
         load_config(env={}, load_dotenv_file=False)
 
-    assert len(exc.value.problems) == 2
+    assert len(exc.value.problems) == 3
     message = str(exc.value)
     assert "ANTHROPIC_API_KEY" in message
     assert "APOLLO_API_KEY" in message
+    assert "SENDER_NAME" in message
+
+
+def test_the_sender_name_is_required_even_for_a_dry_run():
+    """Every composed email is signed, dry run included."""
+    env = {k: v for k, v in MINIMAL.items() if k != "SENDER_NAME"}
+    with pytest.raises(ConfigError, match="SENDER_NAME"):
+        load_config(env=env, load_dotenv_file=False)
 
 
 def test_an_empty_value_counts_as_missing():
@@ -62,7 +78,6 @@ def test_sending_credentials_are_only_required_for_live():
     problems = " ".join(exc.value.problems)
     assert "GMAIL_ADDRESS" in problems
     assert "GMAIL_APP_PASSWORD" in problems
-    assert "SENDER_NAME" in problems
 
 
 def test_live_config_passes_with_gmail_credentials():
@@ -71,7 +86,6 @@ def test_live_config_passes_with_gmail_credentials():
             **MINIMAL,
             "GMAIL_ADDRESS": "jane@gmail.com",
             "GMAIL_APP_PASSWORD": "abcd efgh ijkl mnop",
-            "SENDER_NAME": "Jane",
         },
         require_send=True,
         load_dotenv_file=False,
@@ -164,6 +178,24 @@ def test_several_problems_are_reported_together():
     assert len(exc.value.problems) == 3
 
 
+# ─────────────────────────── the personal website ───────────────────────────
+
+
+def test_the_website_is_unset_by_default():
+    assert load().personal_website == ""
+
+
+def test_a_full_url_is_accepted():
+    assert load(PERSONAL_WEBSITE="https://jane.dev").personal_website == "https://jane.dev"
+    assert load(PERSONAL_WEBSITE="http://jane.dev/cv").personal_website == "http://jane.dev/cv"
+
+
+@pytest.mark.parametrize("value", ["jane.dev", "www.jane.dev", "ftp://jane.dev", "https://"])
+def test_a_url_without_a_usable_scheme_is_rejected(value):
+    with pytest.raises(ConfigError, match="PERSONAL_WEBSITE"):
+        load(PERSONAL_WEBSITE=value)
+
+
 # ─────────────────────────── the CV ───────────────────────────
 
 
@@ -176,6 +208,63 @@ def test_the_cv_is_read(tmp_path: Path):
 def test_a_missing_cv_fails_with_an_actionable_message(tmp_path: Path):
     with pytest.raises(ConfigError, match="CV file not found"):
         load_cv(tmp_path / "nope.txt")
+
+
+def test_a_missing_cv_fails_at_load_config_before_any_api_client_exists(tmp_path: Path):
+    """Startup, not mid-run. The path is named so it is obvious what to fix."""
+    missing = tmp_path / "nope.txt"
+    with pytest.raises(ConfigError, match="CV file not found") as exc:
+        load_config(
+            env={**MINIMAL, "CV_PATH": str(missing)},
+            require_cv=True,
+            load_dotenv_file=False,
+        )
+    assert str(missing) in str(exc.value)
+
+
+def test_the_cv_is_only_required_when_the_command_composes(tmp_path: Path):
+    """init-db and stats must not demand a CV."""
+    config = load(CV_PATH=str(tmp_path / "absent.txt"))
+    assert config.cv_text == ""
+
+
+def test_the_cv_is_read_once_into_the_config(tmp_path: Path):
+    path = tmp_path / "cv.txt"
+    path.write_text("Jane Engineer. Builds things.")
+
+    config = load_config(
+        env={**MINIMAL, "CV_PATH": str(path)}, require_cv=True, load_dotenv_file=False
+    )
+    assert config.cv_text == "Jane Engineer. Builds things."
+
+
+def test_an_oversized_cv_is_rejected(tmp_path: Path):
+    """The whole file goes into every system prompt, so nobody sends a novel."""
+    path = tmp_path / "cv.txt"
+    path.write_text("x" * (MAX_CV_CHARS + 1))
+
+    with pytest.raises(ConfigError, match="over the"):
+        load_cv(path)
+
+
+def test_a_cv_at_exactly_the_limit_is_accepted(tmp_path: Path):
+    path = tmp_path / "cv.txt"
+    path.write_text("x" * MAX_CV_CHARS)
+    assert len(load_cv(path)) == MAX_CV_CHARS
+
+
+def test_cv_problems_are_reported_alongside_everything_else(tmp_path: Path):
+    """One complete list, not one fault at a time."""
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            env={**MINIMAL, "CV_PATH": str(tmp_path / "nope.txt"), "DAILY_CAP": "nope"},
+            require_cv=True,
+            load_dotenv_file=False,
+        )
+
+    problems = " ".join(exc.value.problems)
+    assert "CV file not found" in problems
+    assert "DAILY_CAP" in problems
 
 
 def test_an_empty_cv_is_rejected(tmp_path: Path):

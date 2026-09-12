@@ -255,19 +255,14 @@ def run(
             try:
                 email = composer.compose(contact, campaign, cv_text)
             except Exception as exc:  # noqa: BLE001 — one bad contact must not end the run
+                # Deliberately no outreach row. A `failed` row means "this may
+                # have reached SMTP", which makes already_contacted() true for
+                # this address forever. A contact we never managed to write an
+                # email for has not been contacted, and must stay eligible for
+                # the next run. The run's error_count still records the fault.
                 result.failed += 1
                 result.errors.append(f"compose failed for {contact.email}: {exc}")
                 log.warning("compose failed for %s: %s", contact.email, exc)
-                record_send(
-                    session,
-                    contact=contact,
-                    campaign=campaign.slug,
-                    subject="(composition failed)",
-                    body="",
-                    status=OutreachStatus.FAILED,
-                    error=str(exc),
-                )
-                session.commit()
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     result.stopped_reason = (
@@ -280,6 +275,8 @@ def run(
             # it here means a future change to the composer cannot quietly send
             # an email with no way out of the list.
             if not has_footer(email.body, campaign.removal_line):
+                # As above: refused before delivery, so no row is written and
+                # the contact remains eligible.
                 result.failed += 1
                 result.errors.append(f"missing removal line for {contact.email}")
                 log.error("refusing to send to %s: removal line missing", contact.email)

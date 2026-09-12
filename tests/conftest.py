@@ -114,6 +114,7 @@ def campaign() -> Campaign:
         tone=["Direct.", "No markdown."],
         subject_guidance="Under nine words.",
         max_words=120,
+        max_sentences=5,
         removal_line="Reply 'no thanks' and I won't write again.",
         apollo=ApolloFilters(person_titles=["Technical Recruiter"]),
         follow_up=FollowUpPolicy(max_follow_ups=1, days_between=5, goal="One short nudge."),

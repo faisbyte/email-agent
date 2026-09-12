@@ -23,9 +23,9 @@ alongside it to keep the general path honest.
    stores them. Suppression and prior contact are checked *before* paying a
    credit to reveal an address.
 2. **`run`** — for each new contact: checks the suppression list, checks whether
-   they have been written to before, asks Claude for a subject and body, appends
-   a plain-text removal line, sends, records. Waits a random 30–180 seconds
-   between sends.
+   they have been written to before, asks Claude for a subject and five
+   sentences, assembles the rest of the email in Python, sends, records. Waits a
+   random 30–180 seconds between sends.
 3. **`poll-replies`** — reads the inbox over IMAP, detects bounces from headers,
    catches explicit opt-outs with a regex, and asks Claude to classify the rest
    as interested / rejection / auto-reply / opt-out. An opt-out is suppressed
@@ -61,16 +61,26 @@ cp .env.example .env
 | `APOLLO_API_KEY` | Apollo → Settings → Integrations → API |
 | `GMAIL_APP_PASSWORD` | Enable 2-Step Verification, then [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) — a 16-character app password, **not** your account password |
 
+Set `SENDER_NAME` in `.env` — it signs every email, so it is required even for a
+dry run. `PERSONAL_WEBSITE` is optional; when set it appears on its own line
+under your name.
+
 Add your CV and create the database:
 
 ```bash
 cp data/cv.example.txt data/cv.txt
-$EDITOR data/cv.txt                # everything Claude says about you comes from here
+$EDITOR data/cv.txt
 
 outreach init-db
 ```
 
-`.env`, `data/cv.txt` and `*.db` are all gitignored.
+**About the CV.** Export it to **plain text** — no PDF, no DOCX. Every factual
+claim Claude makes about you must be traceable to this file, so anything not in
+it will not appear in an email. Keep it under 20,000 characters; the whole file
+is sent with every composition, and the app refuses to start above that.
+
+`.env`, `data/cv.txt` and `*.db` are all gitignored. `data/cv.example.txt` is the
+stub to copy, and it is the only CV file in the repo.
 
 ---
 
@@ -97,6 +107,50 @@ outreach suppress someone@corp.com --reason "asked by email"
 blocks every address there.
 
 ---
+
+## What the emails look like
+
+Five sentences, and a fixed budget for them:
+
+1. Who you are.
+2. What you are doing at the moment.
+3–4. One specific, true reason for writing to *this* person or organisation.
+5. The ask.
+
+No "I hope this finds you well." No paragraph of praise for the company. If a
+sentence is not doing one of those four jobs, it does not ship.
+
+**The model writes only the middle.** It returns a subject and those five
+sentences; Python assembles everything around them:
+
+```
+Hi Sarah,
+
+I am a backend engineer in Sydney. I am wrapping up a payments service handling
+about 40,000 transactions a day. Acme posted two platform engineering roles last
+month. The one on the billing team lines up with what I have been building. Are
+there openings worth a conversation?
+
+Thanks,
+Faisal Naveed
+https://faisal.dev
+If you'd rather not hear from me, reply with 'no thanks' and I won't write again.
+```
+
+That split is deliberate. The greeting, the sign-off, the website line and the
+removal line become mechanical guarantees instead of instructions we hand to a
+model and hope it follows — and only the five sentences are ever counted against
+the cap. The website sits outside the five on purpose: spending one of five
+sentences on "you can see my work at…" is a bad trade, and a bare URL under the
+sign-off gets clicked just as often.
+
+If the model returns six sentences, it gets **one** corrective retry stating the
+actual count. If the retry also fails, composition raises and that contact is
+skipped. Nothing is truncated — the ask is the last sentence, so cutting the body
+short produces an email that stops before its own point.
+
+`max_sentences` is per-campaign; `max_words` is soft guidance passed to the
+model.
 
 ## Safety properties
 
@@ -129,6 +183,11 @@ guarantee that depends on a model following an instruction is not a guarantee.
 **A human reply ends the sequence.** Interested, rejection and opt-out all stop
 follow-ups. An out-of-office does not — it is not a person saying no.
 
+**A composition failure is not a send failure.** If Claude cannot produce a
+usable email, no outreach row is written at all. A `failed` row means "this may
+have reached SMTP", which marks the address as contacted forever; a contact we
+never managed to write an email for stays eligible for the next run.
+
 ---
 
 ## Configuration
@@ -160,7 +219,7 @@ outreach run --campaign campaigns/partnerships.toml
 ## Development
 
 ```bash
-pytest            # 269 tests, no network, no clock
+pytest            # 325 tests, no network, no clock
 ruff check src tests
 ```
 

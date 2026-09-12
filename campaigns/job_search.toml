@@ -33,7 +33,13 @@ Under nine words, lowercase-ish and specific. No clickbait, no 'Quick question',
 no re: prefix on a first email.
 """
 
+# Soft guidance, passed to the model in the prompt.
 max_words = 150
+
+# Hard gate, counted in Python after the model answers. The body is only
+# the middle of the email — the greeting, sign-off, website and removal
+# line are assembled separately and never count against this.
+max_sentences = 5
 
 # Appended by Python after the model returns, on every single email.
 # No URL: this project serves no unsubscribe page, so removal is a reply.

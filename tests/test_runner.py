@@ -57,15 +57,21 @@ def make_config(**overrides):
     return SimpleNamespace(**base)
 
 
+BODY = (
+    "I am a software engineer in Sydney. "
+    "I am finishing a payments system. "
+    "Your team posted two backend roles. "
+    "They line up with what I have been building. "
+    "Are there openings worth talking about?"
+)
+
+
 def make_composer(count: int = 100, *, failures: int = 0):
     """A composer whose model always returns a usable draft."""
     outputs: list = [RuntimeError("model exploded")] * failures
-    outputs += [
-        EmailDraft(subject="a quick question", body="Hi there,\n\nShort note.\n\nJane")
-        for _ in range(count)
-    ]
+    outputs += [EmailDraft(subject="backend roles", body=BODY) for _ in range(count)]
     client = FakeAnthropic(outputs=outputs)
-    return Composer(client, model="claude-sonnet-5"), client
+    return Composer(client, model="claude-sonnet-5", sender_name="Jane Engineer"), client
 
 
 class RecordingSender(Sender):
@@ -458,6 +464,20 @@ def test_a_send_failure_is_recorded_and_the_run_continues(session, campaign, mak
     assert counts["sent"] == 3
 
 
+def test_a_send_failure_does_write_a_row_unlike_a_composition_failure(
+    session, campaign, make_contact
+):
+    """The distinction that matters: SMTP was reached, so we must assume the
+    message may have gone out."""
+    make_contact("bob@corp.com")
+    sender = RecordingSender(fail_times=1)
+
+    do_run(session, campaign, sender=sender, live=True)
+
+    assert store.counts_by_status(session) == {"failed": 1}
+    assert store.already_contacted(session, "bob@corp.com") is True
+
+
 def test_the_failure_reason_is_stored(session, campaign, make_contact):
     make_contact("bob@corp.com")
     sender = RecordingSender(fail_times=1, fail_with=SendError("mailbox full"))
@@ -503,7 +523,7 @@ def test_the_failure_streak_resets_after_a_success(session, campaign, make_conta
     assert result.sent == 6
 
 
-def test_a_composition_failure_is_recorded_and_skipped(session, campaign, make_contact):
+def test_a_composition_failure_is_counted_and_skipped(session, campaign, make_contact):
     for i in range(3):
         make_contact(f"p{i}@corp.com")
     composer, _ = make_composer(count=10, failures=1)
@@ -513,6 +533,49 @@ def test_a_composition_failure_is_recorded_and_skipped(session, campaign, make_c
     assert result.failed == 1
     assert result.sent == 2
     assert len(sender.sent) == 2
+
+
+def test_a_composition_failure_writes_no_outreach_row(session, campaign, make_contact):
+    """A composition failure is not a send failure.
+
+    A `failed` row means "this may have reached SMTP", which makes
+    already_contacted() true for that address forever. A contact we never
+    managed to write an email for has not been contacted.
+    """
+    make_contact("bob@corp.com")
+    composer, _ = make_composer(count=0, failures=1)
+
+    result, sender = do_run(session, campaign, composer=composer, live=True)
+
+    assert result.failed == 1
+    assert result.sent == 0
+    assert sender.attempts == 0, "nothing was handed to the sender"
+    assert store.counts_by_status(session) == {}, "no outreach row at all"
+
+
+def test_a_composition_failure_leaves_the_contact_eligible(session, campaign, make_contact):
+    """The point of writing no row: the next run tries again."""
+    make_contact("bob@corp.com")
+    failing, _ = make_composer(count=0, failures=1)
+    do_run(session, campaign, composer=failing, live=True)
+
+    assert store.already_contacted(session, "bob@corp.com") is False
+    assert [c.email for c in store.candidates(session, limit=10)] == ["bob@corp.com"]
+
+    working, _ = make_composer()
+    result, sender = do_run(session, campaign, composer=working, live=True)
+
+    assert result.sent == 1
+    assert sender.sent[0].to_email == "bob@corp.com"
+
+
+def test_a_composition_failure_increments_the_runs_error_count(session, campaign, make_contact):
+    make_contact("bob@corp.com")
+    composer, _ = make_composer(count=0, failures=1)
+
+    result, _ = do_run(session, campaign, composer=composer, live=True)
+
+    assert session.get(store.Run, result.run_id).error_count == 1
 
 
 def test_an_unexpected_sender_fault_does_not_kill_the_run(session, campaign, make_contact):

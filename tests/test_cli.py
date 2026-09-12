@@ -13,6 +13,7 @@ from outreach_agent.cli import build_parser, main
 MINIMAL_ENV = {
     "ANTHROPIC_API_KEY": "sk-test",
     "APOLLO_API_KEY": "apollo-test",
+    "SENDER_NAME": "Jane Engineer",
     "DATABASE_URL": "sqlite://",
 }
 
@@ -23,7 +24,7 @@ def clean_env(monkeypatch):
     for key in list(MINIMAL_ENV) + [
         "GMAIL_ADDRESS",
         "GMAIL_APP_PASSWORD",
-        "SENDER_NAME",
+        "PERSONAL_WEBSITE",
         "ANTHROPIC_MODEL",
         "CAMPAIGN",
         "CV_PATH",
@@ -109,7 +110,6 @@ def test_a_live_run_is_cancelled_without_typed_confirmation(clean_env, tmp_path,
     clean_env.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'live.db'}")
     clean_env.setenv("GMAIL_ADDRESS", "jane@gmail.com")
     clean_env.setenv("GMAIL_APP_PASSWORD", "app-password")
-    clean_env.setenv("SENDER_NAME", "Jane")
     clean_env.setenv("CAMPAIGN", "campaigns/job_search.toml")
 
     cv = tmp_path / "cv.txt"
